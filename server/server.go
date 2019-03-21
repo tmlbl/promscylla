@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"io/ioutil"
 	"net/http"
 
@@ -11,58 +10,48 @@ import (
 	"github.com/golang/snappy"
 )
 
-func RemoteWrite(w http.ResponseWriter, r *http.Request) {
+// RemoteWriteRequest attempts to extract a WriteRequest from HTTP
+func RemoteWriteRequest(w http.ResponseWriter, r *http.Request) (*prompb.WriteRequest, error) {
 	compressed, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	reqBuf, err := snappy.Decode(nil, compressed)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, err
 	}
 
 	var req prompb.WriteRequest
 	if err := proto.Unmarshal(reqBuf, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, err
 	}
 
-	for _, ts := range req.Timeseries {
-		fmt.Println("Writing series with labels", ts.Labels)
-	}
+	return &req, nil
 }
 
-func RemoteRead(w http.ResponseWriter, r *http.Request) {
+// RemoteReadRequest attempts to extract a ReadRequest from HTTP
+func RemoteReadRequest(w http.ResponseWriter, r *http.Request) (*prompb.ReadRequest, error) {
 	compressed, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	reqBuf, err := snappy.Decode(nil, compressed)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, err
 	}
 
 	var req prompb.ReadRequest
 	if err := proto.Unmarshal(reqBuf, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, err
 	}
 
-	for _, query := range req.Queries {
-		for _, matcher := range query.Matchers {
-			fmt.Println("MATCHER", matcher.Name)
-		}
-	}
-}
-
-func Serve() {
-	http.HandleFunc("/write", RemoteWrite)
-	http.HandleFunc("/read", RemoteRead)
-	http.ListenAndServe(":7337", nil)
+	return &req, nil
 }
