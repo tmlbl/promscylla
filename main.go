@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/tmlbl/promscylla/server"
+	"github.com/tmlbl/promscylla/storage"
 )
 
 func handleWrite(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,10 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	err := storage.Connect()
+	if err != nil {
+		log.Fatalln(err)
+	}
 	http.HandleFunc("/write", handleWrite)
 	http.HandleFunc("/read", handleRead)
 	http.ListenAndServe(":7337", nil)

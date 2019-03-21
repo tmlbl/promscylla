@@ -1,7 +1,7 @@
 module github.com/tmlbl/promscylla
 
 require (
-	github.com/gocql/gocql v0.0.0-20190319151216-6bdac5e86117 // indirect
+	github.com/gocql/gocql v0.0.0-20190319151216-6bdac5e86117
 	github.com/gogo/protobuf v1.2.1
 	github.com/golang/snappy v0.0.1
 	github.com/grpc-ecosystem/grpc-gateway v1.8.5 // indirect
