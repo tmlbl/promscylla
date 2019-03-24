@@ -76,8 +76,14 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 				columnDefs = append(columnDefs, fmt.Sprintf("%s ASCII", label.Name))
 			}
 		}
-		stmt := fmt.Sprintf(`CREATE TABLE metrics.%s (name ASCII PRIMARY KEY, %s)`,
-			name, strings.Join(columnDefs, ", "))
+		stmt := fmt.Sprintf(`CREATE TABLE metrics.%s (
+			name ASCII,
+			selector ASCII,
+			value DOUBLE,
+			timestamp BIGINT,
+			%s,
+			PRIMARY KEY (name, selector, timestamp)
+		) WITH CLUSTERING ORDER BY (timestamp DESC)`, name, strings.Join(columnDefs, ", "))
 		fmt.Println(stmt)
 		err = s.sesh.Query(stmt).Exec()
 		if err != nil {
@@ -114,5 +120,23 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 		}
 	}
 
+	return nil
+}
+
+func makeSelector(ts *prompb.TimeSeries) string {
+	s := []string{}
+	for _, label := range ts.Labels {
+		s = append(s, fmt.Sprintf("%s=%s", label.Name, label.Value))
+	}
+	return strings.Join(s, ":")
+}
+
+func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
+	// template := fmt.Sprintf("INSERT INTO metrics.%s ", )
+	// selector := makeSelector(ts)
+	// batch := s.sesh.NewBatch(gocql.UnloggedBatch)
+	// for _, s := range ts.Samples {
+	// stmt := fmt.Sprintf("INSERT INTO metrics.%s ")
+	// }
 	return nil
 }
