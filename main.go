@@ -17,6 +17,10 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 
 	for _, ts := range req.Timeseries {
 		fmt.Println("Write request for", ts.Labels[0].Value)
+		err = store.EnsureSchema(ts)
+		if err != nil {
+			log.Fatalln(err)
+		}
 	}
 }
 
@@ -29,8 +33,14 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	fmt.Println(req)
 }
 
+var store = &storage.ScyllaStore{}
+
 func main() {
-	err := storage.Connect()
+	err := store.Connect()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = store.Initialize()
 	if err != nil {
 		log.Fatalln(err)
 	}
