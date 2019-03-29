@@ -16,7 +16,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, ts := range req.Timeseries {
-		fmt.Println("Write request for", ts.Labels[0].Value)
+		//		fmt.Println("Write request for", ts.Labels[0].Value)
 		err = store.EnsureSchema(ts)
 		if err != nil {
 			w.WriteHeader(500)
