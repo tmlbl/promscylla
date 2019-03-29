@@ -11,12 +11,13 @@ import (
 )
 
 type ScyllaStore struct {
-	sesh *gocql.Session
+	sesh     *gocql.Session
+	keyspace string
 }
 
 // Connect initializes the ScyllaDB session
-func (s *ScyllaStore) Connect() error {
-	cluster := gocql.NewCluster("scylla")
+func (s *ScyllaStore) Connect(hosts []string) error {
+	cluster := gocql.NewCluster(hosts...)
 	cluster.Timeout = time.Second * 10
 	sesh, err := cluster.CreateSession()
 	if err != nil {
@@ -31,15 +32,15 @@ func (s *ScyllaStore) Initialize() error {
 	var name string
 	s.sesh.Query(`
 		SELECT keyspace_name FROM system_schema.keyspaces
-		WHERE keyspace_name = 'metrics'
-	`).Scan(&name)
+		WHERE keyspace_name = ?
+	`, s.keyspace).Scan(&name)
 	if name != "" {
 		return nil
 	}
-	return s.sesh.Query(`
-		create keyspace metrics
+	return s.sesh.Query(fmt.Sprintf(`
+		create keyspace %s
 		WITH replication = {'class':'SimpleStrategy', 'replication_factor' : 3}
-	`).Exec()
+	`, s.keyspace)).Exec()
 }
 
 func tsLabelMap(ts *prompb.TimeSeries) map[string]string {
@@ -56,13 +57,21 @@ type ColumnMeta struct {
 	ColumnName   string
 }
 
-func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
-	name := strings.Split(ts.Labels[0].Value, "_")[0]
+func (s *ScyllaStore) getColumns(tableName string) ([]ColumnMeta, error) {
 	columns := []ColumnMeta{}
 	err := gocqlx.Query(s.sesh.Query(`
 		select keyspace_name,table_name,column_name from system_schema.columns
-		where keyspace_name = 'metrics' and table_name = ?`,
-		name), []string{"keyspace_name", "table_name", "column_name"}).Iter().Select(&columns)
+		where keyspace_name = ? and table_name = ?`,
+		s.keyspace, tableName), []string{"keyspace_name", "table_name", "column_name"}).Iter().Select(&columns)
+	if err != nil {
+		return nil, err
+	}
+	return columns, nil
+}
+
+func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
+	name := strings.Split(ts.Labels[0].Value, "_")[0]
+	columns, err := s.getColumns(name)
 	if err != nil {
 		return err
 	}
@@ -76,14 +85,14 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 				columnDefs = append(columnDefs, fmt.Sprintf("%s ASCII", label.Name))
 			}
 		}
-		stmt := fmt.Sprintf(`CREATE TABLE metrics.%s (
+		stmt := fmt.Sprintf(`CREATE TABLE %s.%s (
 			name ASCII,
 			selector ASCII,
 			value DOUBLE,
 			timestamp BIGINT,
 			%s,
 			PRIMARY KEY (name, selector, timestamp)
-		) WITH CLUSTERING ORDER BY (timestamp DESC)`, name, strings.Join(columnDefs, ", "))
+		) WITH CLUSTERING ORDER BY (selector DESC, timestamp ASC)`, s.keyspace, name, strings.Join(columnDefs, ", "))
 		fmt.Println(stmt)
 		err = s.sesh.Query(stmt).Exec()
 		if err != nil {
@@ -110,7 +119,7 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 
 		if len(missing) > 0 {
 			for i := range missing {
-				stmt := fmt.Sprintf("ALTER TABLE metrics.%s ADD %s ASCII", name, missing[i])
+				stmt := fmt.Sprintf("ALTER TABLE %s.%s ADD %s ASCII", s.keyspace, name, missing[i])
 				fmt.Println(stmt)
 				err = s.sesh.Query(stmt).Exec()
 				if err != nil {

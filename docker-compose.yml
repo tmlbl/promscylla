@@ -11,3 +11,7 @@ services:
     build: .
   scylla:
     image: scylladb/scylla
+    ports:
+    - 9042:9042
+    - 9160:9160
+
