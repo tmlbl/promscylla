@@ -15,6 +15,12 @@ type ScyllaStore struct {
 	keyspace string
 }
 
+func NewScyllaStore(keyspace string) *ScyllaStore {
+	return &ScyllaStore{
+		keyspace: keyspace,
+	}
+}
+
 // Connect initializes the ScyllaDB session
 func (s *ScyllaStore) Connect(hosts []string) error {
 	cluster := gocql.NewCluster(hosts...)
@@ -132,20 +138,57 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 	return nil
 }
 
+// Get the name of the Scylla table that should be used
+func getTableName(ts *prompb.TimeSeries) string {
+	return strings.Split(ts.Labels[0].Value, "_")[0]
+}
+
+// Selector is an ASCII string generated from all labels and their values for a TimeSeries
 func makeSelector(ts *prompb.TimeSeries) string {
 	s := []string{}
-	for _, label := range ts.Labels {
+	for _, label := range ts.Labels[1:] {
 		s = append(s, fmt.Sprintf("%s=%s", label.Name, label.Value))
 	}
 	return strings.Join(s, ":")
 }
 
+func getColumnNames(ts *prompb.TimeSeries) []string {
+	cols := []string{}
+	for _, label := range ts.Labels {
+		if label.Name != "__name__" {
+			cols = append(cols, label.Name)
+		}
+	}
+	return cols
+}
+
+func getLabelValues(ts *prompb.TimeSeries) []string {
+	vals := []string{}
+	for _, label := range ts.Labels {
+		if label.Name != "__name__" {
+			vals = append(vals, fmt.Sprintf("'%s'", label.Value))
+		}
+	}
+	return vals
+}
+
 func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
-	// template := fmt.Sprintf("INSERT INTO metrics.%s ", )
-	// selector := makeSelector(ts)
-	// batch := s.sesh.NewBatch(gocql.UnloggedBatch)
-	// for _, s := range ts.Samples {
-	// stmt := fmt.Sprintf("INSERT INTO metrics.%s ")
-	// }
-	return nil
+	tableName := getTableName(ts)
+	selector := makeSelector(ts)
+	insertTemplate := fmt.Sprintf("INSERT INTO %s.%s (name, selector, timestamp, %s, value) VALUES ('%s', '%s', ?, %s, ?)",
+		s.keyspace, tableName, strings.Join(getColumnNames(ts), ", "),
+		ts.Labels[0].Value, selector, strings.Join(getLabelValues(ts), ", "))
+
+	fmt.Println(insertTemplate)
+
+	batch := gocql.NewBatch(gocql.LoggedBatch)
+	for _, sample := range ts.Samples {
+		batch.Query(insertTemplate, sample.Timestamp, sample.Value)
+	}
+
+	return s.sesh.ExecuteBatch(batch)
+}
+
+func (s *ScyllaStore) ReadSamples(query *prompb.Query) (*prompb.TimeSeries, error) {
+	return nil, nil
 }

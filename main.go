@@ -23,6 +23,12 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 			log.Println("Error ensuring the schema:", err)
 			return
 		}
+		err = store.WriteSamples(ts)
+		if err != nil {
+			w.WriteHeader(500)
+			log.Println("Error writing the samples:", err)
+			return
+		}
 	}
 }
 
@@ -31,13 +37,21 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-
-	fmt.Println(req)
+	for _, q := range req.Queries {
+		series, err := store.ReadSamples(q)
+		if err != nil {
+			w.WriteHeader(500)
+			log.Println("Error reading samples:", err)
+			return
+		}
+		fmt.Println(series)
+	}
 }
 
-var store = &storage.ScyllaStore{}
+var store *storage.ScyllaStore
 
 func main() {
+	store = storage.NewScyllaStore("metrics")
 	err := store.Connect([]string{"scylla"})
 	if err != nil {
 		log.Fatalln(err)
