@@ -39,5 +39,8 @@ func (sc *SchemaCache) Satisfies(s *Schema) bool {
 	sc.mu.Lock()
 	schema := sc.cache[s.TableName]
 	defer sc.mu.Unlock()
+	if schema == nil {
+		return false
+	}
 	return schema.Satisfies(s)
 }

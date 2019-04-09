@@ -92,6 +92,18 @@ func (s *ScyllaStore) getColumns(tableName string) ([]ColumnMeta, error) {
 	return columns, nil
 }
 
+func (s *ScyllaStore) updateCache(tableName string) error {
+	log.Println("Updating cache for", tableName)
+	columns, err := s.getColumns(tableName)
+	if err != nil {
+		return err
+	}
+	for _, col := range columns {
+		s.cache.AddColumn(col)
+	}
+	return nil
+}
+
 func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 	name := getTableName(ts)
 	if s.cache.Satisfies(NewSchema(ts)) {
@@ -156,7 +168,7 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 		}
 	}
 
-	return nil
+	return s.updateCache(name)
 }
 func getColumnNames(ts *prompb.TimeSeries) []string {
 	cols := []string{}

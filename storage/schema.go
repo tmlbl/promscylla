@@ -52,7 +52,9 @@ func getTableName(ts *prompb.TimeSeries) string {
 func getLabelNames(ts *prompb.TimeSeries) map[string]bool {
 	names := map[string]bool{}
 	for _, label := range ts.Labels {
-		names[label.Name] = true
+		if label.Name != "__name__" {
+			names[label.Name] = true
+		}
 	}
 	return names
 }
