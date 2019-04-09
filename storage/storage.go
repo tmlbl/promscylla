@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -12,11 +13,13 @@ import (
 
 type ScyllaStore struct {
 	sesh     *gocql.Session
+	cache    *SchemaCache
 	keyspace string
 }
 
 func NewScyllaStore(keyspace string) *ScyllaStore {
 	return &ScyllaStore{
+		cache:    NewSchemaCache(),
 		keyspace: keyspace,
 	}
 }
@@ -27,7 +30,9 @@ func (s *ScyllaStore) Connect(hosts []string) error {
 	cluster.Timeout = time.Second * 10
 	sesh, err := cluster.CreateSession()
 	if err != nil {
-		return err
+		log.Printf("Failed to connect: %s\n", err)
+		time.Sleep(time.Second * 5)
+		return s.Connect(hosts)
 	}
 	s.sesh = sesh
 	return nil
@@ -40,13 +45,31 @@ func (s *ScyllaStore) Initialize() error {
 		SELECT keyspace_name FROM system_schema.keyspaces
 		WHERE keyspace_name = ?
 	`, s.keyspace).Scan(&name)
-	if name != "" {
-		return nil
-	}
-	return s.sesh.Query(fmt.Sprintf(`
+	if name == "" {
+		log.Println("Creating keyspace", name)
+		err := s.sesh.Query(fmt.Sprintf(`
 		create keyspace %s
 		WITH replication = {'class':'SimpleStrategy', 'replication_factor' : 3}
 	`, s.keyspace)).Exec()
+		if err != nil {
+			return err
+		}
+	}
+	// Bootstrap the schema cache
+	columns := []ColumnMeta{}
+	log.Println("Populating schema cache...")
+	err := gocqlx.Query(s.sesh.Query(`
+		select keyspace_name,table_name,column_name from system_schema.columns
+		where keyspace_name = ?
+	`, s.keyspace), []string{"keyspace_name", "table_name", "column_name"}).Iter().Select(&columns)
+	if err != nil {
+		return err
+	}
+	log.Println("Adding", len(columns), "columns to cache")
+	for _, col := range columns {
+		go s.cache.AddColumn(col)
+	}
+	return nil
 }
 
 func tsLabelMap(ts *prompb.TimeSeries) map[string]string {
@@ -55,12 +78,6 @@ func tsLabelMap(ts *prompb.TimeSeries) map[string]string {
 		m[l.Name] = l.Value
 	}
 	return m
-}
-
-type ColumnMeta struct {
-	KeyspaceName string
-	TableName    string
-	ColumnName   string
 }
 
 func (s *ScyllaStore) getColumns(tableName string) ([]ColumnMeta, error) {
@@ -76,7 +93,11 @@ func (s *ScyllaStore) getColumns(tableName string) ([]ColumnMeta, error) {
 }
 
 func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
-	name := strings.Split(ts.Labels[0].Value, "_")[0]
+	name := getTableName(ts)
+	if s.cache.Satisfies(NewSchema(ts)) {
+		log.Printf("Schema for %s satisfied by cache\n", name)
+		return nil
+	}
 	columns, err := s.getColumns(name)
 	if err != nil {
 		return err
@@ -137,21 +158,6 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 
 	return nil
 }
-
-// Get the name of the Scylla table that should be used
-func getTableName(ts *prompb.TimeSeries) string {
-	return strings.Split(ts.Labels[0].Value, "_")[0]
-}
-
-// Selector is an ASCII string generated from all labels and their values for a TimeSeries
-func makeSelector(ts *prompb.TimeSeries) string {
-	s := []string{}
-	for _, label := range ts.Labels[1:] {
-		s = append(s, fmt.Sprintf("%s=%s", label.Name, label.Value))
-	}
-	return strings.Join(s, ":")
-}
-
 func getColumnNames(ts *prompb.TimeSeries) []string {
 	cols := []string{}
 	for _, label := range ts.Labels {
@@ -185,6 +191,8 @@ func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
 	for _, sample := range ts.Samples {
 		batch.Query(insertTemplate, sample.Timestamp, sample.Value)
 	}
+
+	log.Println("Writing", len(ts.Samples), "samples to", tableName)
 
 	return s.sesh.ExecuteBatch(batch)
 }

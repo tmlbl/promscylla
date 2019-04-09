@@ -60,6 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	log.Println("Starting the web server")
 	http.HandleFunc("/write", handleWrite)
 	http.HandleFunc("/read", handleRead)
 	http.ListenAndServe(":7337", nil)
