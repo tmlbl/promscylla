@@ -17,7 +17,7 @@ type Schema struct {
 // NewSchema extracts schema information from a prompb.TimeSeries
 func NewSchema(ts *prompb.TimeSeries) *Schema {
 	return &Schema{
-		TableName:  getTableName(ts),
+		TableName:  getTimeSeriesTableName(ts),
 		LabelNames: getLabelNames(ts),
 	}
 }
@@ -40,13 +40,17 @@ func (s *Schema) Satisfies(s2 *Schema) bool {
 // We take the first 1 or 2 underscore-separated words from the
 // metric name. This gives a good distribution of the metrics without
 // having to create too many tables.
-func getTableName(ts *prompb.TimeSeries) string {
-	parts := strings.Split(ts.Labels[0].Value, "_")
+func getTableName(metricName string) string {
+	parts := strings.Split(metricName, "_")
 	name := parts[0]
 	if len(parts) > 1 {
 		name = fmt.Sprintf("%s_%s", name, parts[1])
 	}
 	return name
+}
+
+func getTimeSeriesTableName(ts *prompb.TimeSeries) string {
+	return getTableName(ts.Labels[0].Value)
 }
 
 func getLabelNames(ts *prompb.TimeSeries) map[string]bool {

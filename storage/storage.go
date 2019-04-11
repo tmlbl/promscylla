@@ -105,9 +105,9 @@ func (s *ScyllaStore) updateCache(tableName string) error {
 }
 
 func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
-	name := getTableName(ts)
+	name := getTimeSeriesTableName(ts)
 	if s.cache.Satisfies(NewSchema(ts)) {
-		log.Printf("Schema for %s satisfied by cache\n", name)
+		//		log.Printf("Schema for %s satisfied by cache\n", name)
 		return nil
 	}
 	columns, err := s.getColumns(name)
@@ -130,10 +130,14 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 			value DOUBLE,
 			timestamp BIGINT,
 			%s,
-			PRIMARY KEY (metric__name, selector, timestamp)
-		) WITH CLUSTERING ORDER BY (selector DESC, timestamp ASC)`, s.keyspace, name, strings.Join(columnDefs, ", "))
-		fmt.Println(stmt)
+			PRIMARY KEY (metric__name, timestamp, selector)
+		) WITH CLUSTERING ORDER BY (timestamp ASC, selector ASC)`, s.keyspace, name, strings.Join(columnDefs, ", "))
+		//fmt.Println(stmt)
 		err = s.sesh.Query(stmt).Exec()
+		if err != nil {
+			return err
+		}
+		err = s.sesh.Query(fmt.Sprintf("CREATE INDEX %s_ts ON %s.%s (timestamp)", name, s.keyspace, name)).Exec()
 		if err != nil {
 			return err
 		}
@@ -191,24 +195,47 @@ func getLabelValues(ts *prompb.TimeSeries) []string {
 }
 
 func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
-	tableName := getTableName(ts)
+	tableName := getTimeSeriesTableName(ts)
 	selector := makeSelector(ts)
 	insertTemplate := fmt.Sprintf("INSERT INTO %s.%s (metric__name, selector, timestamp, %s, value) VALUES ('%s', '%s', ?, %s, ?)",
 		s.keyspace, tableName, strings.Join(getColumnNames(ts), ", "),
 		ts.Labels[0].Value, selector, strings.Join(getLabelValues(ts), ", "))
-
-	//	fmt.Println(insertTemplate)
 
 	batch := gocql.NewBatch(gocql.LoggedBatch)
 	for _, sample := range ts.Samples {
 		batch.Query(insertTemplate, sample.Timestamp, sample.Value)
 	}
 
-	log.Println("Writing", len(ts.Samples), "samples to", tableName)
+	//	log.Println("Writing", len(ts.Samples), "samples to", tableName)
 
 	return s.sesh.ExecuteBatch(batch)
 }
 
+func (s *ScyllaStore) promToQuery(query *prompb.Query) string {
+	metricName := query.Matchers[0].Value
+	tableName := getTableName(metricName)
+	str := fmt.Sprintf(`
+	SELECT value, timestamp FROM %s.%s WHERE metric__name = '%s' AND timestamp > ? AND timestamp < ?
+	`, s.keyspace, tableName, metricName)
+	return str
+}
+
 func (s *ScyllaStore) ReadSamples(query *prompb.Query) (*prompb.TimeSeries, error) {
-	return nil, nil
+	fmt.Println("Read request", query.Matchers)
+	queryTemplate := s.promToQuery(query)
+	samples := []prompb.Sample{}
+	fmt.Println(queryTemplate)
+	err := gocqlx.Query(s.sesh.Query(queryTemplate, query.StartTimestampMs, query.EndTimestampMs), []string{"value", "timestamp"}).Iter().Select(&samples)
+	if err != nil {
+		return nil, err
+	}
+	return &prompb.TimeSeries{
+		Labels: []*prompb.Label{
+			&prompb.Label{
+				Name:  "__name__",
+				Value: query.Matchers[0].Value,
+			},
+		},
+		Samples: samples,
+	}, nil
 }
