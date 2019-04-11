@@ -85,7 +85,7 @@ func (s *ScyllaStore) getColumns(tableName string) ([]ColumnMeta, error) {
 	err := gocqlx.Query(s.sesh.Query(`
 		select keyspace_name,table_name,column_name from system_schema.columns
 		where keyspace_name = ? and table_name = ?`,
-		s.keyspace, tableName), []string{"keyspace_name", "table_name", "column_name"}).Iter().Select(&columns)
+		s.keyspace, tableName).Consistency(gocql.Quorum), []string{"keyspace_name", "table_name", "column_name"}).Iter().Select(&columns)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 			PRIMARY KEY (metric__name, timestamp, selector)
 		) WITH CLUSTERING ORDER BY (timestamp ASC, selector ASC)`, s.keyspace, name, strings.Join(columnDefs, ", "))
 		//fmt.Println(stmt)
-		err = s.sesh.Query(stmt).Exec()
+		err = s.sesh.Query(stmt).Consistency(gocql.Quorum).Exec()
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 			for i := range missing {
 				stmt := fmt.Sprintf("ALTER TABLE %s.%s ADD %s ASCII", s.keyspace, name, missing[i])
 				fmt.Println(stmt)
-				err = s.sesh.Query(stmt).Exec()
+				err = s.sesh.Query(stmt).Consistency(gocql.Quorum).Exec()
 				if err != nil {
 					return err
 				}

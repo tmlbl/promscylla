@@ -52,7 +52,7 @@ var store *storage.ScyllaStore
 
 func main() {
 	store = storage.NewScyllaStore("metrics")
-	err := store.Connect([]string{"scylla"})
+	err := store.Connect([]string{"scylladb-node1", "scylladb-node2", "scylladb-node3"})
 	if err != nil {
 		log.Fatalln(err)
 	}

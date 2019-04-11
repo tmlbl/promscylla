@@ -1,4 +1,5 @@
 #!/bin/bash
 
-docker exec -it promscylla_scylla_1 cqlsh
+ID=$(docker ps --filter="label=kind=db" -q | tail -1)
+docker exec -it $ID cqlsh
 

@@ -1,17 +1,48 @@
 version: '3'
 
+networks:
+  backend:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: 10.10.10.0/16
+
 services:
   prometheus:
     image: prom/prometheus
+    networks:
+      backend:
     volumes:
     - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
     - 9090:9090
+
   promscylla:
+    networks:
+      backend:
     build: .
-  scylla:
+
+  scylladb-node1:
     image: scylladb/scylla
-    ports:
-    - 9042:9042
-    - 9160:9160
+    labels:
+      kind: db
+    networks:
+      backend:
+    command: "--seeds scylladb-node1,scylladb-node2,scylladb-node3 --smp 1 --memory 256M"
+
+  scylladb-node2:
+    image: scylladb/scylla
+    labels:
+      kind: db
+    networks:
+      backend:
+    command: "--seeds scylladb-node1,scylladb-node2,scylladb-node3 --smp 1 --memory 256M"
+
+  scylladb-node3:
+    image: scylladb/scylla
+    labels:
+      kind: db
+    networks:
+      backend:
+    command: "--seeds scylladb-node1,scylladb-node2,scylladb-node3 --smp 1 --memory 256M"
 
