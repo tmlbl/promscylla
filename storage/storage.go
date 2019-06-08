@@ -244,32 +244,51 @@ func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
 	return nil
 }
 
-func (s *ScyllaStore) promToQuery(query *prompb.Query) string {
-	metricName := query.Matchers[0].Value
-	tableName := getTableName(metricName)
-	str := fmt.Sprintf(`
-	SELECT value, timestamp FROM %s.%s WHERE metric__name = '%s' AND timestamp > ? AND timestamp < ?
-	`, s.keyspace, tableName, metricName)
-	return str
+func getQueryNameMatcher(query *prompb.Query) string {
+	for _, m := range query.Matchers {
+		if m.Name == "__name__" {
+			return m.Value
+		}
+	}
+	return ""
 }
 
-func (s *ScyllaStore) ReadSamples(query *prompb.Query) (*prompb.TimeSeries, error) {
-	queryTemplate := s.promToQuery(query)
-	samples := []prompb.Sample{}
-	err := gocqlx.Query(s.sesh.Query(queryTemplate, query.StartTimestampMs, query.EndTimestampMs),
-		[]string{"value", "timestamp"}).Iter().Select(&samples)
-	if err != nil {
-		return nil, err
+func (s *ScyllaStore) promToQuery(query *prompb.Query) string {
+	metricName := getQueryNameMatcher(query)
+	tableName := getTableName(metricName)
+	str := fmt.Sprintf(`
+	SELECT * FROM %s.%s
+	    WHERE metric__name = '%s'
+	    AND timestamp > ? AND timestamp < ?
+	`, s.keyspace, tableName, metricName)
+	for _, m := range query.Matchers {
+		if m.Name == "__name__" {
+			continue
+		}
+		str += fmt.Sprintf(" AND %s = '%s'", m.Name, m.Value)
 	}
-	log.Println("Read request", query.Matchers,
-		"returning", len(samples), "results")
-	return &prompb.TimeSeries{
-		Labels: []*prompb.Label{
-			&prompb.Label{
-				Name:  "__name__",
-				Value: query.Matchers[0].Value,
-			},
-		},
-		Samples: samples,
-	}, nil
+	return str + " ALLOW FILTERING"
+}
+
+func (s *ScyllaStore) ReadSamples(query *prompb.Query) ([]*prompb.TimeSeries, error) {
+	queryTemplate := s.promToQuery(query)
+
+	iter := s.sesh.Query(queryTemplate,
+		query.StartTimestampMs, query.EndTimestampMs).Iter()
+
+	results := newResultMap()
+
+	for {
+		row := make(map[string]interface{})
+		if !iter.MapScan(row) {
+			break
+		}
+		results.add(row)
+	}
+
+	series := []*prompb.TimeSeries{}
+	for _, s := range results.m {
+		series = append(series, s)
+	}
+	return series, nil
 }

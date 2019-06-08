@@ -48,7 +48,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.Results = append(resp.Results, &prompb.QueryResult{
-			Timeseries: []*prompb.TimeSeries{series},
+			Timeseries: series,
 		})
 	}
 	data, err := proto.Marshal(&resp)
