@@ -1,10 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 
+	"github.com/gogo/protobuf/proto"
+	"github.com/golang/snappy"
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/tmlbl/promscylla/server"
 	"github.com/tmlbl/promscylla/storage"
 )
@@ -37,6 +39,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	resp := prompb.ReadResponse{}
 	for _, q := range req.Queries {
 		series, err := store.ReadSamples(q)
 		if err != nil {
@@ -44,7 +47,21 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 			log.Println("Error reading samples:", err)
 			return
 		}
-		fmt.Println(series)
+		resp.Results = append(resp.Results, &prompb.QueryResult{
+			Timeseries: []*prompb.TimeSeries{series},
+		})
+	}
+	data, err := proto.Marshal(&resp)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Header().Set("Content-Encoding", "snappy")
+
+	compressed := snappy.Encode(nil, data)
+	if _, err := w.Write(compressed); err != nil {
+		log.Println("Error writing response", err)
 	}
 }
 

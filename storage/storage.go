@@ -254,14 +254,15 @@ func (s *ScyllaStore) promToQuery(query *prompb.Query) string {
 }
 
 func (s *ScyllaStore) ReadSamples(query *prompb.Query) (*prompb.TimeSeries, error) {
-	fmt.Println("Read request", query.Matchers)
 	queryTemplate := s.promToQuery(query)
 	samples := []prompb.Sample{}
-	fmt.Println(queryTemplate)
-	err := gocqlx.Query(s.sesh.Query(queryTemplate, query.StartTimestampMs, query.EndTimestampMs), []string{"value", "timestamp"}).Iter().Select(&samples)
+	err := gocqlx.Query(s.sesh.Query(queryTemplate, query.StartTimestampMs, query.EndTimestampMs),
+		[]string{"value", "timestamp"}).Iter().Select(&samples)
 	if err != nil {
 		return nil, err
 	}
+	log.Println("Read request", query.Matchers,
+		"returning", len(samples), "results")
 	return &prompb.TimeSeries{
 		Labels: []*prompb.Label{
 			&prompb.Label{
