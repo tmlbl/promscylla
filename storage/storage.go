@@ -12,15 +12,19 @@ import (
 )
 
 type ScyllaStore struct {
-	sesh     *gocql.Session
-	cache    *SchemaCache
-	keyspace string
+	sesh       *gocql.Session
+	cache      *SchemaCache
+	keyspace   string
+	maxRetries int
+	retryDelay time.Duration
 }
 
 func NewScyllaStore(keyspace string) *ScyllaStore {
 	return &ScyllaStore{
-		cache:    NewSchemaCache(),
-		keyspace: keyspace,
+		cache:      NewSchemaCache(),
+		keyspace:   keyspace,
+		maxRetries: 3,
+		retryDelay: time.Duration(2000) * time.Millisecond,
 	}
 }
 
@@ -174,6 +178,7 @@ func (s *ScyllaStore) EnsureSchema(ts *prompb.TimeSeries) error {
 
 	return s.updateCache(name)
 }
+
 func getColumnNames(ts *prompb.TimeSeries) []string {
 	cols := []string{}
 	for _, label := range ts.Labels {
@@ -194,6 +199,15 @@ func getLabelValues(ts *prompb.TimeSeries) []string {
 	return vals
 }
 
+func getSeriesName(ts *prompb.TimeSeries) string {
+	for _, label := range ts.Labels {
+		if label.Name == "__name__" {
+			return label.Value
+		}
+	}
+	return ""
+}
+
 func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
 	tableName := getTimeSeriesTableName(ts)
 	selector := makeSelector(ts)
@@ -206,9 +220,28 @@ func (s *ScyllaStore) WriteSamples(ts *prompb.TimeSeries) error {
 		batch.Query(insertTemplate, sample.Timestamp, sample.Value)
 	}
 
-	//	log.Println("Writing", len(ts.Samples), "samples to", tableName)
+	// The most common reason that samples fail to write, at least at first,
+	// is because the schema updates to accomodate them have not fully
+	// propagated through the Scylla cluster.
+	attempts := 0
+	for attempts < s.maxRetries {
+		err := s.sesh.ExecuteBatch(batch)
+		attempts++
+		if err != nil {
+			log.Println("ERROR writing samples of",
+				getSeriesName(ts),
+				":", err, "retrying in:", s.retryDelay)
+			if attempts >= s.maxRetries {
+				return err
+			}
+			time.Sleep(s.retryDelay)
+			continue
+		}
+		break
+	}
 
-	return s.sesh.ExecuteBatch(batch)
+	// log.Println("SUCCESS wrote", getSeriesName(ts))
+	return nil
 }
 
 func (s *ScyllaStore) promToQuery(query *prompb.Query) string {
